@@ -9,12 +9,13 @@ button,input,select,textarea{font:inherit;color:inherit}
 .ic{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
 .mut,small{color:var(--mut)}small{display:block;font-size:13px}
 /* Sidebar */
-.side{position:fixed;inset:0 auto 0 0;width:var(--side);background:#fff;border-right:1px solid var(--bd);padding:20px 14px;display:flex;flex-direction:column;gap:18px;z-index:30;transition:transform .3s var(--e),width .3s var(--e)}
+.side{position:fixed;inset:0 auto 0 0;width:var(--side);height:100vh;height:100dvh;min-height:0;box-sizing:border-box;background:#fff;border-right:1px solid var(--bd);padding:20px 14px;display:flex;flex-direction:column;gap:18px;overflow-x:hidden;overflow-y:auto;overscroll-behavior-y:contain;scrollbar-gutter:stable;z-index:30;transition:transform .3s var(--e),width .3s var(--e)}
 .logo img{height:34px;display:block}.logo .sy{display:none}
-#nav{display:flex;flex-direction:column;gap:4px}
+#nav{display:flex;flex-direction:column;gap:4px;min-height:min-content}
 #nav a{position:relative;display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:12px;color:var(--mut);text-decoration:none;font-weight:500;transition:background .2s,color .2s,transform .2s}
 #nav a::before{content:"";position:absolute;left:-14px;top:20%;height:60%;width:4px;border-radius:0 4px 4px 0;background:var(--pri);transform:scaleY(0);transition:transform .3s var(--e)}
 #nav a:hover{background:var(--bg);color:var(--ink);transform:translateX(2px)}
+#nav a:focus-visible,.side :focus-visible{outline:3px solid var(--pri);outline-offset:2px;scroll-margin-block:16px}
 #nav a[aria-current=page]{background:var(--lav);color:var(--pri)}#nav a[aria-current=page]::before{transform:scaleY(1)}
 .foot{margin-top:auto;display:grid;gap:6px}
 .me{display:flex;align-items:center;gap:10px;background:none;border:0;padding:8px;border-radius:12px;cursor:pointer;text-align:left;transition:background .2s}.me:hover{background:var(--bg)}
@@ -93,6 +94,9 @@ h1{font-size:22px}.split{grid-template-columns:1fr}.cal{gap:3px}.day{min-height:
 .account-email{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:650;color:var(--ink);font-size:13px}
 .account-message{display:block;margin:4px 0 8px;font-size:12px;line-height:1.4;overflow-wrap:anywhere}
 .account-error{color:#b42318}
+.account-blocked-screen{max-width:680px;margin:clamp(32px,10vh,100px) auto;padding:clamp(22px,5vw,42px);border-color:#e5b2aa;background:var(--card)}
+.account-blocked-screen h1{margin:0 0 12px}.account-blocked-screen p{line-height:1.6}.admin-user{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 0;border-bottom:1px solid var(--bd)}
+.admin-user>div:first-child{min-width:0;display:grid;gap:3px;overflow-wrap:anywhere}.admin-user small{color:var(--mut);font-size:12px}.admin-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:5px}.admin-actions .btn{white-space:nowrap}
 .account-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .account-actions .btn{flex:1 1 auto;white-space:normal;min-width:0;padding:6px 8px;font-size:12px}
 .auth-hint{margin:4px 0 18px}
@@ -138,7 +142,7 @@ h1{font-size:22px}.split{grid-template-columns:1fr}.cal{gap:3px}.day{min-height:
 }
 @media(max-width:1000px) and (min-width:701px){.account-email,.account-message{display:none}.account-area{padding:5px}.account-actions{flex-direction:column}.account-actions .btn{font-size:10px;padding:5px 3px}}
 @media(max-width:1000px){.account-identity{justify-content:center}.account-meta{display:none}}
-@media(max-width:700px){.account-area{padding:10px}.account-actions .btn{min-height:38px}.account-email,.account-message{display:block}.account-identity{justify-content:flex-start}.account-meta{display:grid}.profile-dialog{padding:20px}.profile-picture-row{align-items:flex-start;padding:11px}.profile-avatar{width:64px;height:64px}}
+@media(max-width:700px){.account-area{padding:10px}.account-actions .btn{min-height:38px}.account-email,.account-message{display:block}.account-identity{justify-content:flex-start}.account-meta{display:grid}.profile-dialog{padding:20px}.profile-picture-row{align-items:flex-start;padding:11px}.profile-avatar{width:64px;height:64px}.admin-user{align-items:flex-start;flex-direction:column}.admin-actions{justify-content:flex-start}.account-blocked-screen .row{align-items:stretch;flex-direction:column}}
 @media(prefers-reduced-motion:reduce){.loading-mark{animation:none}}
 
 

@@ -1,6 +1,6 @@
 # Cadence account setup
 
-Cadence had no backend configuration when this account layer was added, and no Supabase project is connected to this workspace. The app is ready to use Supabase Auth and Postgres once you provide a project URL and publishable key. No credentials have been invented or committed.
+Cadence uses Supabase Auth, Postgres, Realtime, and private Storage. The project URL and publishable key are configured in `supabase-config.js`; never place a secret or service-role key there.
 
 ## 1. Create a Supabase project
 
@@ -17,6 +17,20 @@ If the project restricts Data API exposure, expose `public.cadence_user_data` an
 ## 2a. Add profile customization
 
 Run [`supabase/migrations/20261118160000_cadence_profiles_and_avatars.sql`](supabase/migrations/20261118160000_cadence_profiles_and_avatars.sql) in the SQL Editor after the account-data migration. It creates the `cadence_profiles` row for each signed-in user and a private `cadence-avatars` Storage bucket. Users can access only their own profile and the single avatar object under their Auth user ID. The bucket accepts JPG, PNG, and WebP images up to 5 MB. Profile changes are included in Realtime for other signed-in devices.
+
+## 2b. Account status and admin tools
+
+The status migrations are [`supabase/migrations/20261119120000_cadence_account_status.sql`](supabase/migrations/20261119120000_cadence_account_status.sql) and [`supabase/migrations/20261119130000_cadence_status_rls_invoker.sql`](supabase/migrations/20261119130000_cadence_status_rls_invoker.sql). Together they add `status`, `ban_reason`, `banned_until`, and `status_updated_at` to `cadence_profiles`, default existing and new profiles to `active`, and update the RLS policies for study data and avatars. They have already been applied to the connected Supabase project. Apply both in order to any other Cadence Supabase project before using this version of the app. Keep the `private` schema out of the Data API's exposed schemas.
+
+The trusted `cadence-admin` Edge Function is in [`supabase/functions/cadence-admin/index.ts`](supabase/functions/cadence-admin/index.ts); it has been deployed. It validates the signed-in user token itself because this project uses the newer publishable key format. Admin membership is an allowlist held only in Edge Function secrets. To enable your account as the first admin:
+
+1. In Supabase, open **Table Editor → cadence_profiles** and copy the `user_id` for your own account.
+2. Open **Edge Functions → Secrets**, add `CADENCE_ADMIN_USER_IDS` with that UUID as its value, and save. For more than one admin, separate UUIDs with commas.
+3. Refresh Cadence or sign in again. The **Manage accounts** button will appear in your account panel.
+
+Supabase supplies the function’s backend URL and server-only secret key. Do not copy those into Cadence or GitHub. The function checks the caller’s verified Auth session against the allowlist before using its privileged client.
+
+In **Table Editor → cadence_profiles**, inspect `status` (`active`, `banned`, or `deleting`), `ban_reason`, `banned_until`, and `status_updated_at`. Normal status changes happen in Cadence’s **Manage accounts** panel, not by editing the table. A ban preserves the account and data; an optional end date automatically restores policy access after it passes. Deletion first changes status to `deleting`, then removes the avatar and deletes the Auth user; the existing foreign-key cascade removes the profile and study-data row. If cleanup fails, the account remains blocked as `deleting` so an admin can retry.
 
 ## 3. Configure email authentication
 
@@ -56,6 +70,7 @@ On sign-out Cadence immediately replaces the in-memory account state with guest 
 5. On a browser with guest data, sign in and try both **Import browser data** and **Keep separate**.
 6. Use password reset and sign out. Confirm the guest state appears after sign-out.
 7. Open **Edit profile**, change the display name, upload or remove a picture, then sign in to the same account on another device to confirm the profile appears there too.
+8. After adding your admin UUID to the function secret, use **Manage accounts** to ban a separate test account. In that account’s active browser, confirm the blocked message appears from Realtime (or within the 30-second fallback), and confirm its account-scoped queries are rejected by RLS. Reactivate it and test permanent deletion only with a disposable test account.
 
 For local preview, run any static HTTP server from the project folder and add that origin to Supabase’s redirect allow list.
 

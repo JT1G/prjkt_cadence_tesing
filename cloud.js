@@ -7,6 +7,7 @@
   let client = null;
   let authSubscription = null;
   let channel = null, profileChannel = null;
+  let profileObjectUrl = '';
 
   function getClient() {
     if (!configured) throw new Error('Supabase is not configured yet.');
@@ -55,27 +56,31 @@
     const userId = await currentUser(expectedUserId);
     const table = getClient().from('cadence_profiles');
     let { data, error } = await table
-      .select('user_id,display_name,avatar_path,updated_at')
+      .select('user_id,display_name,avatar_path,updated_at,status,ban_reason,banned_until,status_updated_at')
       .maybeSingle();
     if (error) throw error;
     await currentUser(userId);
     if (!data) {
-      const created = await table.insert({ display_name: '', avatar_path: null }).select('user_id,display_name,avatar_path,updated_at').single();
+      const created = await table.insert({ display_name: '', avatar_path: null }).select('user_id,display_name,avatar_path,updated_at,status,ban_reason,banned_until,status_updated_at').single();
       if (created.error && created.error.code !== '23505') throw created.error;
       if (created.data) data = created.data;
       else {
-        const existing = await table.select('user_id,display_name,avatar_path,updated_at').maybeSingle();
+        const existing = await table.select('user_id,display_name,avatar_path,updated_at,status,ban_reason,banned_until,status_updated_at').maybeSingle();
         if (existing.error) throw existing.error;
         data = existing.data;
       }
     }
     await currentUser(userId);
     if (!data || data.user_id !== userId) throw new Error('The profile owner did not match the signed-in user.');
+    if (profileObjectUrl) URL.revokeObjectURL(profileObjectUrl);
+    profileObjectUrl = '';
     let avatarUrl = '';
-    if (data.avatar_path) {
-      const signed = await getClient().storage.from('cadence-avatars').createSignedUrl(data.avatar_path, 86400);
-      if (signed.error) throw signed.error;
-      avatarUrl = `${signed.data.signedUrl}&v=${encodeURIComponent(data.updated_at || '')}`;
+    const statusActive = data.status === 'active' || data.status === 'banned' && data.banned_until && Date.parse(data.banned_until) <= Date.now();
+    if (data.avatar_path && statusActive) {
+      const downloaded = await getClient().storage.from('cadence-avatars').download(data.avatar_path);
+      if (downloaded.error) throw downloaded.error;
+      profileObjectUrl = URL.createObjectURL(downloaded.data);
+      avatarUrl = profileObjectUrl;
     }
     await currentUser(userId);
     return { ...data, avatarUrl };
@@ -186,8 +191,22 @@
     return client.auth.signOut({ scope: 'local' });
   }
 
+  async function adminRequest(body) {
+    const userId = await currentUser();
+    const { data, error } = await getClient().functions.invoke('cadence-admin', { body });
+    if (error) {
+      let detail = error.message || 'Account management failed.';
+      try { const payload = await error.context?.json(); if (payload?.error) detail = payload.error; } catch { /* keep SDK message */ }
+      const result = new Error(detail); result.status = error.context?.status || 0; throw result;
+    }
+    await currentUser(userId);
+    return data;
+  }
+
   function watchUserData(userId, onChange, onStatus) {
-    stopWatching();
+    if (channel) getClient().removeChannel(channel);
+    if (profileChannel) getClient().removeChannel(profileChannel);
+    channel = null; profileChannel = null;
     channel = getClient()
       .channel(`cadence-data:${userId}`)
       .on('postgres_changes', {
@@ -218,6 +237,19 @@
     if (profileChannel && client) client.removeChannel(profileChannel);
     channel = null;
     profileChannel = null;
+    if (profileObjectUrl) URL.revokeObjectURL(profileObjectUrl);
+    profileObjectUrl = '';
+  }
+
+  async function readAccountStatus(expectedUserId) {
+    const userId = await currentUser(expectedUserId);
+    const { data, error } = await getClient().from('cadence_profiles')
+      .select('user_id,status,ban_reason,banned_until').maybeSingle();
+    if (error) throw error;
+    await currentUser(userId);
+    if (!data) { const missing = new Error('This account profile no longer exists.'); missing.code = 'CADENCE_PROFILE_MISSING'; throw missing; }
+    if (data.user_id !== userId) throw new Error('The account profile owner did not match the signed-in user.');
+    return data;
   }
 
   window.CadenceCloud = {
@@ -225,6 +257,7 @@
     initialize,
     readData,
     readProfile,
+    readAccountStatus,
     updateProfileName,
     uploadAvatar,
     removeAvatar,
@@ -234,6 +267,7 @@
     requestPasswordReset,
     updatePassword,
     signOut,
+    adminRequest,
     watchUserData,
     watchProfile,
     stopWatching
