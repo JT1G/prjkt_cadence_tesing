@@ -12,7 +12,11 @@ Open the project’s **SQL Editor**, paste the contents of [`supabase/migrations
 
 The record preserves Cadence’s current state format: subjects (`courses`), assignments, planner events, Playbook notes, flashcard decks/cards, quiz data and results, study sessions, activity, and timer settings. The save function checks a revision number, so simultaneous edits from multiple devices return a visible conflict instead of silently replacing newer cloud data.
 
-If the project restricts Data API exposure, expose `public.cadence_user_data` in **Project Settings → API → Data API**. The migration’s grants and row policies still restrict what each role can do and which rows they can access.
+If the project restricts Data API exposure, expose `public.cadence_user_data` and `public.cadence_profiles` in **Project Settings → API → Data API**. The migrations’ grants and row policies still restrict what each role can do and which rows they can access.
+
+## 2a. Add profile customization
+
+Run [`supabase/migrations/20261118160000_cadence_profiles_and_avatars.sql`](supabase/migrations/20261118160000_cadence_profiles_and_avatars.sql) in the SQL Editor after the account-data migration. It creates the `cadence_profiles` row for each signed-in user and a private `cadence-avatars` Storage bucket. Users can access only their own profile and the single avatar object under their Auth user ID. The bucket accepts JPG, PNG, and WebP images up to 5 MB. Profile changes are included in Realtime for other signed-in devices.
 
 ## 3. Configure email authentication
 
@@ -51,5 +55,7 @@ On sign-out Cadence immediately replaces the in-memory account state with guest 
 4. Sign in as a different account and confirm that it sees only its own row.
 5. On a browser with guest data, sign in and try both **Import browser data** and **Keep separate**.
 6. Use password reset and sign out. Confirm the guest state appears after sign-out.
+7. Open **Edit profile**, change the display name, upload or remove a picture, then sign in to the same account on another device to confirm the profile appears there too.
 
 For local preview, run any static HTTP server from the project folder and add that origin to Supabase’s redirect allow list.
+

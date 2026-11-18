@@ -10,9 +10,10 @@ const clone = value => JSON.parse(JSON.stringify(value));
 let guestState = Store.load();
 if (!guestState) { guestState = buildSeed(); Store.save(guestState); }
 let S = clone(guestState); // Signed-in data replaces this in memory; it is never written to guest storage.
-let activeUser = null, accountRevision = 0, cloudStatus = CadenceCloud.configured ? 'checking' : 'guest';
+let activeUser = null, activeProfile = null, accountRevision = 0, cloudStatus = CadenceCloud.configured ? 'checking' : 'guest';
 let cloudError = '', cloudConflict = false, pendingWrites = 0, deferredRemote = null, localDirty = false, localVersion = 0;
 let accountGeneration = 0, saveQueue = Promise.resolve(), noteSaveTimer = 0, importPromptUser = '';
+let pendingProfileFile = null, profileAvatarOperation = 'keep', profilePreviewUrl = '', profileCleanupPending = false;
 const save = () => {
   if (!activeUser) {
     const ok = Store.save(S);
@@ -73,19 +74,37 @@ const cOpts = () => S.courses.map(c => [c.id, c.name]);
 
 let lastFocus = null;
 const modal = $('#modal'), sheetEl = $('#sheet');
-function sheet(html) { lastFocus = document.activeElement; sheetEl.innerHTML = html; modal.classList.add('open'); sheetEl.querySelector('input,select,textarea,button')?.focus(); }
-function closeSheet() { modal.classList.remove('open'); lastFocus?.focus?.(); }
+function sheet(html) { lastFocus = document.activeElement; sheetEl.innerHTML = html; const isProfile = Boolean(sheetEl.querySelector('#profile-title')); modal.setAttribute('aria-label', isProfile ? 'Edit profile' : 'Dialog'); modal.classList.toggle('profile-modal', isProfile); modal.classList.add('open'); sheetEl.querySelector('input,select,textarea,button')?.focus(); }
+function closeSheet() { if (profilePreviewUrl) URL.revokeObjectURL(profilePreviewUrl); profilePreviewUrl = ''; pendingProfileFile = null; profileAvatarOperation = 'keep'; modal.classList.remove('open', 'profile-modal'); sheetEl.innerHTML = ''; lastFocus?.focus?.(); }
 function toast(m, bad) { const t = $('#toast'); t.textContent = m; t.className = 'show' + (bad ? ' bad' : ''); clearTimeout(toast.id); toast.id = setTimeout(() => t.className = '', 2600); }
 function ask(msg, yes, label = 'Delete') { sheet(`<h2>Are you sure?</h2><p class="mut" style="margin-bottom:18px">${esc(msg)}</p><div class="row"><button class="btn dng" id="yes">${label}</button><button class="btn" data-close>Cancel</button></div>`); $('#yes').onclick = () => { closeSheet(); yes(); }; }
 
+function profileAvatarMarkup(profile, name) {
+  return profile?.avatarUrl
+    ? `<img src="${esc(profile.avatarUrl)}" alt="" aria-hidden="true">`
+    : esc((String(name || 'S').trim()[0] || 'S').toUpperCase());
+}
+
+function renderIdentity() {
+  const name = activeUser ? (activeProfile?.display_name || 'Set display name') : S.name;
+  const avatar = $('#av'), who = $('#who'), trigger = $('.me');
+  if (who) who.textContent = name;
+  if (avatar) avatar.innerHTML = profileAvatarMarkup(activeUser ? activeProfile : null, name);
+  if (trigger) {
+    trigger.dataset.act = activeUser ? 'profile-edit' : 'name';
+    trigger.setAttribute('aria-label', activeUser ? 'Edit your profile' : 'Edit your name');
+  }
+}
+
 function renderAccountArea() {
   const el = $('#account-area'); if (!el) return;
+  renderIdentity();
   if (cloudStatus === 'checking' || cloudStatus === 'loading') {
     el.innerHTML = '<p class="mut account-message" role="status">Loading account…</p>';
     return;
   }
   if (activeUser && cloudStatus === 'error') {
-    el.innerHTML = `<p class="account-email" title="${esc(activeUser.email)}">${esc(activeUser.email)}</p><small class="account-message account-error" role="status">${esc(cloudError || 'Could not load account data.')}</small><div class="account-actions"><button class="btn sm" data-act="account-retry">Retry load</button><button class="btn sm" data-act="auth-signout">Sign out</button></div>`;
+    el.innerHTML = `<div class="account-identity"><span class="account-avatar">${profileAvatarMarkup(activeProfile, activeProfile?.display_name || 'Student')}</span><span class="account-meta"><strong>${esc(activeProfile?.display_name || 'Your account')}</strong><small class="account-email" title="${esc(activeUser.email)}">${esc(activeUser.email)}</small></span></div><small class="account-message account-error" role="status">${esc(cloudError || 'Could not load account data.')}</small><div class="account-actions"><button class="btn sm" data-act="account-retry">Retry load</button><button class="btn sm" data-act="auth-signout">Sign out</button></div>`;
     return;
   }
   if (!activeUser) {
@@ -93,7 +112,7 @@ function renderAccountArea() {
     return;
   }
   const status = pendingWrites ? 'Saving to your account…' : cloudConflict ? 'Another device saved newer data. Reload the cloud copy before editing further.' : cloudError ? `Sync issue: ${cloudError}` : 'Synced to your account';
-  el.innerHTML = `<p class="account-email" title="${esc(activeUser.email)}">${esc(activeUser.email)}</p><small class="account-message${cloudError ? ' account-error' : ''}" role="status">${esc(status)}</small><div class="account-actions">${cloudConflict ? '<button class="btn sm" data-act="cloud-reload">Reload cloud data</button>' : cloudError ? '<button class="btn sm" data-act="cloud-retry">Retry save</button>' : ''}<button class="btn sm" data-act="import-guest">Import browser data</button><button class="btn sm" data-act="auth-signout">Sign out</button></div>`;
+  el.innerHTML = `<div class="account-identity"><span class="account-avatar">${profileAvatarMarkup(activeProfile, activeProfile?.display_name || 'Student')}</span><span class="account-meta"><strong>${esc(activeProfile?.display_name || 'Set display name')}</strong><small class="account-email" title="${esc(activeUser.email)}">${esc(activeUser.email)}</small></span></div><small class="account-message${cloudError ? ' account-error' : ''}" role="status">${esc(status)}</small><div class="account-actions"><button class="btn sm" data-act="profile-edit">Edit profile</button>${cloudConflict ? '<button class="btn sm" data-act="cloud-reload">Reload cloud data</button>' : cloudError ? '<button class="btn sm" data-act="cloud-retry">Retry save</button>' : ''}<button class="btn sm" data-act="import-guest">Import browser data</button><button class="btn sm" data-act="auth-signout">Sign out</button></div>`;
 }
 
 function normalizeState(value) {
@@ -121,6 +140,27 @@ function showPasswordUpdate() {
   sheet('<h2>Choose a new password</h2><p class="mut auth-hint">Use at least 8 characters for your new password.</p><form id="password-form" novalidate><label>New password<input name="password" type="password" autocomplete="new-password" minlength="8" required></label><label>Confirm password<input name="confirm" type="password" autocomplete="new-password" minlength="8" required></label><p id="password-message" class="err auth-message" role="status" aria-live="polite"></p><div class="row"><button class="btn pri" id="password-submit">Save new password</button></div></form>');
 }
 
+function showProfileForm() {
+  if (!activeUser || cloudStatus !== 'ready') return;
+  const name = activeProfile?.display_name || '';
+  const avatar = activeProfile?.avatar_path ? `<img src="${esc(activeProfile.avatarUrl)}" alt="Current profile picture">` : `<span>${profileAvatarMarkup(null, name || 'Student')}</span>`;
+  sheet(`<section class="profile-dialog" aria-labelledby="profile-title"><div class="profile-heading"><div><p class="profile-eyebrow">YOUR CADENCE ACCOUNT</p><h2 id="profile-title">Edit profile</h2></div><button type="button" class="profile-close" data-close aria-label="Close edit profile">×</button></div><p class="profile-intro">Choose how your account appears in Cadence. Your email and password stay with account security.</p><form id="profile-form" novalidate><div class="profile-picture-row"><div class="profile-avatar" id="profile-preview" aria-label="Profile picture preview">${avatar}</div><div class="profile-picture-controls"><label for="profile-image">Profile picture</label><input id="profile-image" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="profile-image-help"><small id="profile-image-help">JPG, PNG, or WebP · up to 5 MB</small><button class="text-button profile-remove" type="button" data-act="profile-remove-photo" ${!activeProfile?.avatar_path && !profileCleanupPending ? 'disabled' : ''}>${activeProfile?.avatar_path ? 'Remove picture' : profileCleanupPending ? 'Retry picture cleanup' : 'No picture set'}</button></div></div><label for="profile-name">Display name<input id="profile-name" name="displayName" type="text" maxlength="60" autocomplete="nickname" value="${esc(name)}" placeholder="What should we call you?" required></label><p id="profile-message" class="profile-message" role="status" aria-live="polite"></p><div class="row profile-actions"><button class="btn pri" id="profile-save">Save changes</button><button class="btn" type="button" data-close>Cancel</button></div></form></section>`);
+  $('#profile-name')?.focus();
+  $('#profile-image').addEventListener('change', async event => {
+    const file = event.target.files?.[0], status = $('#profile-message');
+    if (!file) return;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) { profileAvatarOperation = 'keep'; pendingProfileFile = null; status.textContent = 'Choose a JPG, PNG, or WebP image.'; event.target.value = ''; return; }
+    if (file.size > 5 * 1024 * 1024) { profileAvatarOperation = 'keep'; pendingProfileFile = null; status.textContent = 'Choose an image smaller than 5 MB.'; event.target.value = ''; return; }
+    try {
+      if (window.createImageBitmap) { const bitmap = await createImageBitmap(file); bitmap.close(); }
+    } catch { profileAvatarOperation = 'keep'; pendingProfileFile = null; status.textContent = 'That file could not be read as an image.'; event.target.value = ''; return; }
+    if (profilePreviewUrl) URL.revokeObjectURL(profilePreviewUrl);
+    pendingProfileFile = file; profileAvatarOperation = 'replace'; profilePreviewUrl = URL.createObjectURL(file);
+    $('#profile-preview').innerHTML = `<img src="${esc(profilePreviewUrl)}" alt="Selected profile picture preview">`;
+    status.textContent = 'New picture selected. Save changes to upload it.';
+  });
+}
+
 function accountLoadView(message, error = false) {
   $('#view').innerHTML = `<div class="page"><section class="card center account-loading" role="status"><h1>${error ? 'Account data unavailable' : 'Loading your account'}</h1><p class="mut">${esc(message)}</p>${error ? '<div class="row account-recovery-actions"><button class="btn pri" data-act="account-retry">Try again</button><button class="btn" data-act="auth-signout">Sign out</button></div>' : '<span class="loading-mark" aria-hidden="true"></span>'}</section></div>`;
 }
@@ -143,7 +183,9 @@ function applyDeferredRemote() {
 
 function clearPrivateViewState() {
   clearTimeout(noteSaveTimer); noteSaveTimer = 0;
-  modal.classList.remove('open'); sheetEl.innerHTML = ''; lastFocus = null;
+  if (profilePreviewUrl) URL.revokeObjectURL(profilePreviewUrl);
+  profilePreviewUrl = ''; pendingProfileFile = null; profileAvatarOperation = 'keep';
+  modal.classList.remove('open', 'profile-modal'); sheetEl.innerHTML = ''; lastFocus = null;
   U.tq = ''; U.tc = ''; U.tp = ''; U.ts = ''; U.nq = ''; U.nid = null;
   U.did = null; U.ci = 0; U.qz = null; U.qi = 0; U.ans = []; U.res = null; U.tcr = '';
 }
@@ -156,7 +198,7 @@ async function switchToUser(user) {
       CadenceCloud.stopWatching();
       clearPrivateViewState(); saveQueue = Promise.resolve();
       clearInterval(T.id); T.run = false; T.mode = 'focus'; T.left = guestState.timer.focus * 60;
-      activeUser = null; accountRevision = 0; pendingWrites = 0; deferredRemote = null; localDirty = false;
+      activeUser = null; activeProfile = null; profileCleanupPending = false; accountRevision = 0; pendingWrites = 0; deferredRemote = null; localDirty = false;
       cloudError = ''; cloudConflict = false; cloudStatus = 'guest'; S = clone(guestState);
     } else cloudStatus = 'guest';
     render();
@@ -168,7 +210,7 @@ async function switchToUser(user) {
   CadenceCloud.stopWatching();
   clearPrivateViewState(); saveQueue = Promise.resolve();
   clearInterval(T.id); T.run = false; T.mode = 'focus';
-  activeUser = { id: nextId, email: user.email || '' };
+  activeUser = { id: nextId, email: user.email || '' }; activeProfile = null; profileCleanupPending = false;
   accountRevision = 0; pendingWrites = 0; deferredRemote = null; localDirty = false;
   cloudError = ''; cloudConflict = false; cloudStatus = 'loading';
   S = normalizeState(buildSeed());
@@ -177,7 +219,10 @@ async function switchToUser(user) {
   try {
     const row = await CadenceCloud.readData(nextId);
     if (generation !== accountGeneration || activeUser?.id !== nextId) return;
+    const profile = await CadenceCloud.readProfile(nextId);
+    if (generation !== accountGeneration || activeUser?.id !== nextId) return;
     S = normalizeState(row.data || buildSeed());
+    activeProfile = profile;
     accountRevision = Number(row.revision || 0);
     cloudStatus = 'ready'; cloudError = '';
     T.left = S.timer.focus * 60;
@@ -188,6 +233,11 @@ async function switchToUser(user) {
         cloudError = 'Live sync is reconnecting. Changes still save to your account.';
         renderAccountArea();
       }
+    });
+    CadenceCloud.watchProfile(nextId, profile => {
+      if (activeUser?.id !== nextId || generation !== accountGeneration) return;
+      activeProfile = profile;
+      renderAccountArea();
     });
     if (Store.load() && importPromptUser !== nextId) {
       importPromptUser = nextId;
@@ -494,6 +544,15 @@ Object.assign(A, {
   'auth-forgot': () => showAuthForm('reset', $('#auth-email')?.value || ''),
   'auth-switch-signup': () => showAuthForm('signup', $('#auth-email')?.value || ''),
   'auth-switch-signin': () => showAuthForm('signin', $('#auth-email')?.value || ''),
+  'profile-edit': () => showProfileForm(),
+  'profile-remove-photo': () => {
+    if (!activeProfile?.avatar_path && !profileCleanupPending) return;
+    if (profilePreviewUrl) URL.revokeObjectURL(profilePreviewUrl);
+    profilePreviewUrl = ''; pendingProfileFile = null; profileAvatarOperation = 'remove';
+    $('#profile-image').value = '';
+    $('#profile-preview').innerHTML = `<span>${profileAvatarMarkup(null, $('#profile-name').value || 'Student')}</span>`;
+    $('#profile-message').textContent = activeProfile?.avatar_path ? 'The picture will be removed when you save.' : 'Cadence will retry removing the old image when you save.';
+  },
   'auth-signout': async () => { await switchToUser(null); const { error } = await CadenceCloud.signOut().catch(error => ({ error })); toast(error ? 'Signed out of Cadence on this device. Remote sign-out could not be confirmed.' : 'Signed out. Guest data is still available in this browser.', Boolean(error)); },
   'import-guest': () => showImportPrompt(),
   'import-confirm': () => { void importGuestData(); },
@@ -513,9 +572,58 @@ document.addEventListener('click', e => {
   if (e.target === modal || e.target.closest('[data-close]')) closeSheet();
   if (e.target.closest('#nav a')) document.body.classList.remove('nav');
 });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeSheet(); document.body.classList.remove('nav'); } });
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closeSheet(); document.body.classList.remove('nav'); return; }
+  if (e.key === 'Tab' && modal.classList.contains('open')) {
+    const focusable = [...sheetEl.querySelectorAll('a[href],button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex]:not([tabindex="-1"])')]
+      .filter(el => el.getClientRects().length);
+    if (!focusable.length) return;
+    const first = focusable[0], last = focusable[focusable.length - 1];
+    if (e.shiftKey && (document.activeElement === first || !sheetEl.contains(document.activeElement))) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  }
+});
 document.addEventListener('submit', async e => {
   const form = e.target;
+  if (form.id === 'profile-form') {
+    e.preventDefault();
+    if (!activeUser || cloudStatus !== 'ready') return;
+    const userId = activeUser.id, generation = accountGeneration;
+    const name = String(new FormData(form).get('displayName') || '').trim();
+    const button = $('#profile-save'), status = $('#profile-message');
+    if (!name || name.length > 60) { status.textContent = 'Enter a display name with 1 to 60 characters.'; $('#profile-name').focus(); return; }
+    button.disabled = true; button.textContent = 'Saving…'; status.textContent = 'Saving profile…';
+    const stillCurrent = () => activeUser?.id === userId && accountGeneration === generation;
+    try {
+      if (name !== (activeProfile?.display_name || '')) {
+        activeProfile = await CadenceCloud.updateProfileName(name, userId);
+        if (!stillCurrent()) return;
+        renderAccountArea();
+      }
+      if (profileAvatarOperation === 'replace' && pendingProfileFile) {
+        activeProfile = await CadenceCloud.uploadAvatar(pendingProfileFile, userId);
+        if (!stillCurrent()) return;
+        profileCleanupPending = false;
+      } else if (profileAvatarOperation === 'remove') {
+        const result = await CadenceCloud.removeAvatar(userId);
+        if (!stillCurrent()) return;
+        activeProfile = result.profile;
+        profileCleanupPending = Boolean(result.cleanupError);
+        renderAccountArea();
+        closeSheet();
+        toast(result.cleanupError ? 'Could not remove the picture. It is still on your profile; try again.' : 'Profile saved and picture removed.', Boolean(result.cleanupError));
+        return;
+      }
+      if (!stillCurrent()) return;
+      renderAccountArea(); closeSheet(); toast('Profile saved.');
+    } catch (error) {
+      if (!stillCurrent()) return;
+      renderAccountArea();
+      status.textContent = error.message || 'Profile could not be saved. Check your connection and try again.';
+      status.classList.add('profile-error'); button.disabled = false; button.textContent = 'Save changes';
+    }
+    return;
+  }
   if (form.id === 'auth-form') {
     e.preventDefault();
     const fields = new FormData(form), mode = form.dataset.mode, email = String(fields.get('email') || '').trim(), password = String(fields.get('password') || '');
@@ -596,10 +704,11 @@ function render() {
   $('#view').innerHTML = `<div class="page${enter ? ' enter' : ''}">${V[U.route]()}</div>`;
   FILL[U.route]?.(); if (U.route === 'timer') paint();
   document.querySelectorAll('#nav a').forEach(a => a.dataset.r === U.route ? a.setAttribute('aria-current', 'page') : a.removeAttribute('aria-current'));
-  $('#who').textContent = S.name; $('#av').textContent = (S.name[0] || 'S').toUpperCase();
+  renderIdentity();
   if (enter) window.scrollTo(0, 0);
 }
 $('#nav').innerHTML = NAV.map(([r, l]) => `<a href="#${r}" data-r="${r}">${ic(r)}<span>${l}</span></a>`).join('');
 window.addEventListener('hashchange', render);
 void bootAccount();
 })();
+
