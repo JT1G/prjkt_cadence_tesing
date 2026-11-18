@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 18720)
-Total output lines: 845
-
 /* Cadence app: state, small UI helpers, one view function per section, and one click handler. */
 (() => {
 'use strict';
@@ -221,7 +218,388 @@ function showPasswordUpdate() {
 
 function showProfileForm() {
   if (!activeUser || cloudStatus !== 'ready') return;
-  const name = activeProfile?.display_name ||…8720 tokens truncated… ' quizzes')}${stat('Study streak', streak(), 'days')}</section>
+  const name = activeProfile?.display_name || '';
+  const avatar = activeProfile?.avatar_path ? `<img src="${esc(activeProfile.avatarUrl)}" alt="Current profile picture">` : `<span>${profileAvatarMarkup(null, name || 'Student')}</span>`;
+  sheet(`<section class="profile-dialog" aria-labelledby="profile-title"><div class="profile-heading"><div><p class="profile-eyebrow">YOUR CADENCE ACCOUNT</p><h2 id="profile-title">Edit profile</h2></div><button type="button" class="profile-close" data-close aria-label="Close edit profile">×</button></div><p class="profile-intro">Choose how your account appears in Cadence. Your email and password stay with account security.</p><form id="profile-form" novalidate><div class="profile-picture-row"><div class="profile-avatar" id="profile-preview" aria-label="Profile picture preview">${avatar}</div><div class="profile-picture-controls"><label for="profile-image">Profile picture</label><input id="profile-image" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="profile-image-help"><small id="profile-image-help">JPG, PNG, or WebP · up to 5 MB</small><button class="text-button profile-remove" type="button" data-act="profile-remove-photo" ${!activeProfile?.avatar_path && !profileCleanupPending ? 'disabled' : ''}>${activeProfile?.avatar_path ? 'Remove picture' : profileCleanupPending ? 'Retry picture cleanup' : 'No picture set'}</button></div></div><label for="profile-name">Display name<input id="profile-name" name="displayName" type="text" maxlength="60" autocomplete="nickname" value="${esc(name)}" placeholder="What should we call you?" required></label><p id="profile-message" class="profile-message" role="status" aria-live="polite"></p><div class="row profile-actions"><button class="btn pri" id="profile-save">Save changes</button><button class="btn" type="button" data-close>Cancel</button></div></form></section>`);
+  $('#profile-name')?.focus();
+  $('#profile-image').addEventListener('change', async event => {
+    const file = event.target.files?.[0], status = $('#profile-message');
+    if (!file) return;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) { profileAvatarOperation = 'keep'; pendingProfileFile = null; status.textContent = 'Choose a JPG, PNG, or WebP image.'; event.target.value = ''; return; }
+    if (file.size > 5 * 1024 * 1024) { profileAvatarOperation = 'keep'; pendingProfileFile = null; status.textContent = 'Choose an image smaller than 5 MB.'; event.target.value = ''; return; }
+    try {
+      if (window.createImageBitmap) { const bitmap = await createImageBitmap(file); bitmap.close(); }
+    } catch { profileAvatarOperation = 'keep'; pendingProfileFile = null; status.textContent = 'That file could not be read as an image.'; event.target.value = ''; return; }
+    if (profilePreviewUrl) URL.revokeObjectURL(profilePreviewUrl);
+    pendingProfileFile = file; profileAvatarOperation = 'replace'; profilePreviewUrl = URL.createObjectURL(file);
+    $('#profile-preview').innerHTML = `<img src="${esc(profilePreviewUrl)}" alt="Selected profile picture preview">`;
+    status.textContent = 'New picture selected. Save changes to upload it.';
+  });
+}
+
+function accountLoadView(message, error = false) {
+  $('#view').innerHTML = `<div class="page"><section class="card center account-loading" role="status"><h1>${error ? 'Account data unavailable' : 'Loading your account'}</h1><p class="mut">${esc(message)}</p>${error ? '<div class="row account-recovery-actions"><button class="btn pri" data-act="account-retry">Try again</button><button class="btn" data-act="auth-signout">Sign out</button></div>' : '<span class="loading-mark" aria-hidden="true"></span>'}</section></div>`;
+}
+
+function applyAccountRow(row) {
+  if (!activeUser || !row || row.user_id && row.user_id !== activeUser.id) return;
+  if (Number(row.revision || 0) <= accountRevision) return;
+  if (localDirty || pendingWrites) { deferredRemote = row; return; }
+  S = normalizeState(row.data);
+  accountRevision = Number(row.revision || 0);
+  cloudError = ''; cloudConflict = false;
+  render();
+}
+
+function applyDeferredRemote() {
+  if (!deferredRemote || localDirty || pendingWrites) return;
+  const row = deferredRemote; deferredRemote = null;
+  if (Number(row.revision || 0) > accountRevision) applyAccountRow(row);
+}
+
+function clearPrivateViewState() {
+  clearTimeout(noteSaveTimer); noteSaveTimer = 0;
+  if (profilePreviewUrl) URL.revokeObjectURL(profilePreviewUrl);
+  profilePreviewUrl = ''; pendingProfileFile = null; profileAvatarOperation = 'keep';
+  modal.classList.remove('open', 'profile-modal'); sheetEl.innerHTML = ''; lastFocus = null;
+  U.tq = ''; U.tc = ''; U.tp = ''; U.ts = ''; U.nq = ''; U.nid = null;
+  U.did = null; U.ci = 0; U.qz = null; U.qi = 0; U.ans = []; U.res = null; U.tcr = '';
+}
+
+async function switchToUser(user) {
+  const nextId = user?.id || '';
+  if (!nextId) {
+    if (accountBlocked) { cloudStatus = 'blocked'; render(); return; }
+    if (activeUser || cloudStatus === 'loading') {
+      accountGeneration++;
+      CadenceCloud.stopWatching(); clearInterval(accountStatusTimer); accountStatusTimer = 0;
+      clearPrivateViewState(); saveQueue = Promise.resolve();
+      clearInterval(T.id); T.run = false; T.mode = 'focus'; T.left = guestState.timer.focus * 60;
+      activeUser = null; activeProfile = null; profileCleanupPending = false; accountRevision = 0; pendingWrites = 0; deferredRemote = null; localDirty = false;
+      cloudError = ''; cloudConflict = false; cloudStatus = 'guest'; S = clone(guestState);
+      accountStatusUnavailable = false;
+    } else cloudStatus = 'guest';
+    render();
+    return;
+  }
+  if (activeUser?.id === nextId && ['loading', 'ready'].includes(cloudStatus)) return;
+
+  const generation = ++accountGeneration;
+  accountBlocked = null; isCadenceAdmin = false;
+  CadenceCloud.stopWatching();
+  clearInterval(accountStatusTimer); accountStatusTimer = 0;
+  clearPrivateViewState(); saveQueue = Promise.resolve();
+  clearInterval(T.id); T.run = false; T.mode = 'focus';
+  activeUser = { id: nextId, email: user.email || '' }; activeProfile = null; profileCleanupPending = false;
+  accountStatusUnavailable = false;
+  accountRevision = 0; pendingWrites = 0; deferredRemote = null; localDirty = false;
+  cloudError = ''; cloudConflict = false; cloudStatus = 'loading';
+  S = normalizeState(buildSeed());
+  T.left = S.timer.focus * 60;
+  render();
+  try {
+    const profile = await CadenceCloud.readProfile(nextId);
+    if (generation !== accountGeneration || activeUser?.id !== nextId) return;
+    activeProfile = profile;
+    if (!accountStatusActive(profile)) { await blockAccount(profile, nextId); return; }
+    const row = await CadenceCloud.readData(nextId);
+    if (generation !== accountGeneration || activeUser?.id !== nextId) return;
+    S = normalizeState(row.data || buildSeed());
+    accountRevision = Number(row.revision || 0);
+    cloudStatus = 'ready'; cloudError = '';
+    T.left = S.timer.focus * 60;
+    render();
+    try { isCadenceAdmin = Boolean((await CadenceCloud.adminRequest({ action: 'check-admin' })).isAdmin); } catch { isCadenceAdmin = false; }
+    if (generation !== accountGeneration || activeUser?.id !== nextId) return;
+    renderAccountArea();
+    CadenceCloud.watchUserData(nextId, applyAccountRow, status => {
+      if (activeUser?.id !== nextId || generation !== accountGeneration) return;
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        cloudError = 'Live sync is reconnecting. Changes still save to your account.';
+        renderAccountArea();
+      }
+    });
+    CadenceCloud.watchProfile(nextId, profile => {
+      if (activeUser?.id !== nextId || generation !== accountGeneration) return;
+      if (!accountStatusActive(profile)) { void blockAccount(profile, nextId); return; }
+      activeProfile = profile;
+      renderAccountArea();
+    });
+    accountStatusTimer = setInterval(() => { void recheckAccountStatus(nextId, generation); }, 30000);
+    if (Store.load() && importPromptUser !== nextId) {
+      importPromptUser = nextId;
+      const localSnapshot = Store.load() || guestState;
+      fingerprint(localSnapshot).then(fp => {
+        const alreadyImported = (row.imported_guest_fingerprints || []).includes(fp);
+        if (!alreadyImported && activeUser?.id === nextId && cloudStatus === 'ready') setTimeout(showImportPrompt, 250);
+      });
+    }
+  } catch (error) {
+    if (generation !== accountGeneration || activeUser?.id !== nextId) return;
+    if (error?.code === '23503') {
+      await blockAccount({ status: 'deleting' }, nextId);
+      return;
+    }
+    try {
+      const profile = await CadenceCloud.readAccountStatus(nextId);
+      if (generation !== accountGeneration || activeUser?.id !== nextId) return;
+      if (!accountStatusActive(profile)) { await blockAccount(profile, nextId); return; }
+    } catch (statusError) {
+      if (generation !== accountGeneration || activeUser?.id !== nextId) return;
+      if (['23503', 'CADENCE_PROFILE_MISSING'].includes(statusError?.code)) { await blockAccount({ status: 'deleting' }, nextId); return; }
+    }
+    cloudStatus = 'error'; cloudError = error.message || 'Could not load account data.';
+    accountLoadView('Cadence kept your guest records separate. Check your connection and try again.', true);
+    renderAccountArea();
+  }
+}
+
+function handleAuthEvent(event, session) {
+  if (event === 'PASSWORD_RECOVERY') setTimeout(showPasswordUpdate, 0);
+  if (event === 'SIGNED_OUT') { void switchToUser(null); return; }
+  if (session?.user) void switchToUser(session.user);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && activeUser) void recheckAccountStatus(activeUser.id, accountGeneration);
+});
+
+async function bootAccount() {
+  if (!CadenceCloud.configured) { cloudStatus = 'guest'; render(); return; }
+  cloudStatus = 'checking'; render();
+  try {
+    const session = await CadenceCloud.initialize(handleAuthEvent);
+    await switchToUser(session?.user || null);
+  } catch (error) {
+    cloudStatus = 'guest'; cloudError = error.message || 'Could not check your account session.';
+    render();
+  }
+}
+
+function mergeRecords(accountRecords, guestRecords, nestedCards = false) {
+  const merged = clone(accountRecords || []);
+  for (const item of guestRecords || []) {
+    const index = item?.id ? merged.findIndex(row => row?.id === item.id) : merged.findIndex(row => JSON.stringify(row) === JSON.stringify(item));
+    if (index < 0) { merged.push(clone(item)); continue; }
+    if (!item?.id) continue;
+    const previous = merged[index];
+    merged[index] = { ...previous, ...clone(item) };
+    if (nestedCards && Array.isArray(previous.cards) && Array.isArray(item.cards)) {
+      merged[index].cards = mergeRecords(previous.cards, item.cards);
+    }
+  }
+  return merged;
+}
+
+function mergeStudyData(accountData, guestData) {
+  const account = normalizeState(accountData), local = normalizeState(guestData), merged = { ...account };
+  for (const key of ['courses', 'tasks', 'events', 'notes', 'decks', 'quizzes', 'quizLog', 'sessions', 'activity']) {
+    merged[key] = mergeRecords(account[key], local[key], key === 'decks');
+  }
+  if (account.name === 'Student' && local.name) merged.name = local.name;
+  merged.timer = { ...account.timer, ...local.timer };
+  return merged;
+}
+
+function persistNoteDraft() {
+  clearTimeout(noteSaveTimer); noteSaveTimer = 0;
+  save().then(ok => {
+    const saved = $('#saved');
+    if (saved) saved.textContent = ok ? 'Saved ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'Not saved — retry from your account panel';
+  });
+}
+
+async function fingerprint(value) {
+  const bytes = new TextEncoder().encode(JSON.stringify(value));
+  if (globalThis.crypto?.subtle) {
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+  }
+  let hash = 2166136261;
+  for (const byte of bytes) hash = Math.imul(hash ^ byte, 16777619);
+  return `fnv-${(hash >>> 0).toString(16)}`;
+}
+
+function showImportPrompt() {
+  if (!activeUser || cloudStatus !== 'ready') return;
+  const local = Store.load() || guestState;
+  if (!local) { toast('There is no guest data to import.'); return; }
+  const cards = (local.decks || []).reduce((sum, deck) => sum + (deck.cards || []).length, 0);
+  const summary = `${(local.courses || []).length} subjects, ${(local.decks || []).length} flashcard decks (${cards} cards), ${(local.events || []).length} planner items, ${(local.quizzes || []).length} exam/drill sets, ${(local.quizLog || []).length} results, ${(local.notes || []).length} Playbook notes, and ${(local.sessions || []).length} study sessions`;
+  sheet(`<h2>Import browser study data?</h2><p class="mut">This browser has ${esc(summary)}. Cadence will merge these records into <b>${esc(activeUser.email)}</b>. Matching record IDs update the account record; other records are added. Your guest copy stays on this device even after a successful import.</p><p id="import-message" class="err auth-message" role="status" aria-live="polite"></p><div class="row"><button class="btn pri" data-act="import-confirm">Import browser data</button><button class="btn" data-act="import-decline">Keep separate</button></div>`);
+}
+
+async function importGuestData() {
+  if (!activeUser || cloudStatus !== 'ready') return false;
+  const userId = activeUser.id, generation = accountGeneration;
+  const local = Store.load() || clone(guestState);
+  const fp = await fingerprint(local);
+  const message = $('#import-message'), button = $('[data-act="import-confirm"]');
+  if (button) { button.disabled = true; button.textContent = 'Importing…'; }
+  if (message) { message.className = 'mut auth-message'; message.textContent = 'Reading your account and safely merging local records…'; }
+  try {
+    const row = await CadenceCloud.readData(userId);
+    if (generation !== accountGeneration || activeUser?.id !== userId) return false;
+    if ((row.imported_guest_fingerprints || []).includes(fp)) {
+      S = normalizeState(row.data || S); accountRevision = Number(row.revision || 0); render(); closeSheet(); toast('This guest snapshot was already imported.'); return true;
+    }
+    const merged = mergeStudyData(row.data || S, local);
+    const saved = await CadenceCloud.writeData(merged, Number(row.revision || 0), fp, userId);
+    if (generation !== accountGeneration || activeUser?.id !== userId) return false;
+    S = normalizeState(merged); accountRevision = Number(saved.revision);
+    cloudError = ''; cloudConflict = false; localDirty = false;
+    render(); closeSheet(); toast('Guest study data imported. The browser copy remains available here.');
+    return true;
+  } catch (error) {
+    if (generation === accountGeneration && activeUser?.id === userId) {
+      cloudError = error.message || 'Import failed.';
+      cloudConflict = /CADENCE_REVISION_CONFLICT/i.test(cloudError);
+      renderAccountArea();
+      if (message) { message.className = 'err auth-message'; message.textContent = `Import was not confirmed. Your guest data is unchanged. ${cloudError}`; }
+    }
+    return false;
+  } finally {
+    if (button && document.contains(button)) { button.disabled = false; button.textContent = 'Try import again'; }
+  }
+}
+
+async function reloadAccountData() {
+  if (!activeUser) return;
+  const userId = activeUser.id, generation = accountGeneration;
+  cloudStatus = 'loading'; render();
+  try {
+    const row = await CadenceCloud.readData(userId);
+    if (generation !== accountGeneration || activeUser?.id !== userId) return;
+    S = normalizeState(row.data || buildSeed()); accountRevision = Number(row.revision || 0);
+    cloudError = ''; cloudConflict = false; localDirty = false; deferredRemote = null; cloudStatus = 'ready';
+    render();
+  } catch (error) {
+    if (generation !== accountGeneration || activeUser?.id !== userId) return;
+    cloudError = error.message || 'Could not reload cloud data.'; cloudStatus = 'error';
+    accountLoadView('Your account data is still protected. Try again when the connection is available.', true); renderAccountArea();
+  }
+}
+
+window.addEventListener('focus', async () => {
+  if (!activeUser || cloudStatus !== 'ready' && !accountStatusUnavailable) return;
+  const userId = activeUser.id, generation = accountGeneration;
+  await recheckAccountStatus(userId, generation);
+  if (!activeUser || activeUser.id !== userId || generation !== accountGeneration) return;
+  if (cloudStatus !== 'ready') return;
+  if (localDirty || pendingWrites) return;
+  CadenceCloud.readData(userId).then(applyAccountRow).catch(error => {
+    if (generation === accountGeneration && activeUser?.id === userId) { cloudError = error.message || 'Cloud sync is temporarily unavailable.'; renderAccountArea(); }
+  });
+});
+/* fields: [name, label, type, required, selectOptions]; onSave may return an error string to keep the form open */
+function openForm(title, fields, v, onSave, onDel) {
+  const inner = fields.map(([n, l, t, r, o]) => `<label>${l}${t === 'select' ? `<select name="${n}">${opts(o, v[n])}</select>` : t === 'textarea' ? `<textarea name="${n}" rows="3">${esc(v[n])}</textarea>` : `<input name="${n}" type="${t}" value="${esc(v[n])}"${r ? ' required' : ''}${t === 'number' ? ' min="1" max="180"' : ''}>`}</label>`).join('');
+  sheet(`<h2>${title}</h2><form id="mf" novalidate>${inner}<p class="err" id="err" role="alert"></p><div class="row"><button class="btn pri">Save</button><button type="button" class="btn" data-close>Cancel</button>${onDel ? '<button type="button" class="btn dng" id="del">Delete</button>' : ''}</div></form>`);
+  $('#mf').onsubmit = async e => {
+    e.preventDefault();
+    const d = Object.fromEntries(new FormData(e.target)); fields.forEach(([n]) => d[n] = String(d[n] ?? '').trim());
+    const miss = fields.find(([n, , , r]) => r && !d[n]);
+    if (miss) { $('#err').textContent = `${miss[1]} is required.`; return; }
+    const res = await onSave(d);
+    if (typeof res === 'string') $('#err').textContent = res; else if (res !== false) closeSheet();
+  };
+  if (onDel) $('#del').onclick = onDel;
+}
+
+/* ---------- Views ---------- */
+V.dashboard = () => {
+  const done = S.tasks.filter(t => t.status === 'done').length, h = today.getHours();
+  const up = S.tasks.filter(t => t.status !== 'done').sort((a, b) => a.due.localeCompare(b.due)).slice(0, 5);
+  const ev = S.events.filter(e => e.date === iso(today)).sort((a, b) => a.time.localeCompare(b.time));
+  return `<header class="hd"><div><h1>${h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'}, ${esc(S.name)}</h1>
+  <p class="mut">${today.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}. Find your rhythm. Make progress.</p></div></header>
+  <section class="grid stats"><div class="card stat lift">${ring(prog(), '#6d4aff')}<div><b>Overall progress</b><span>${done} of ${S.tasks.length} assignments done</span></div></div>
+  ${stat('Completed', done, 'assignments')}${stat('Study this week', hrs(week().reduce((a, x) => a + x.m, 0)) + ' h', 'focus time')}${stat('Study streak', streak(), streak() === 1 ? 'day' : 'days')}</section>
+  <section class="quick"><a class="btn pri" href="#timer">${ic('timer')}Start focus</a><a class="btn" href="#tasks">${ic('tasks')}Assignments</a><a class="btn" href="#cards">${ic('cards')}Flashcards</a><a class="btn" href="#quiz">${ic('quiz')}Take a quiz</a><a class="btn" href="#notes">${ic('notes')}Notes</a></section>
+  <section class="grid two"><div class="card"><h2>Upcoming deadlines</h2>${up.map(t => `<div class="item"><span><b>${esc(t.title)}</b><small><i class="dot" style="background:${course(t.course).color}"></i>${esc(course(t.course).name)}</small></span><span class="pill ${t.due < iso(today) ? 'late' : ''}">${t.due < iso(today) ? 'Overdue · ' : ''}${fd(t.due)}</span></div>`).join('') || '<p class="empty">Nothing due. Add an assignment to get started.</p>'}</div>
+  <div class="card"><h2>Today's schedule</h2>${ev.map(e => `<div class="item"><span><b>${esc(e.title)}</b><small>${TYPE[e.type][0]}</small></span><span class="pill" style="background:${TYPE[e.type][1]}">${esc(e.time || 'All day')}</span></div>`).join('') || '<p class="empty">Nothing scheduled today. Add a study session in the planner.</p>'}</div></section>
+  <h2>Courses</h2><section class="grid cards">${S.courses.map(c => `<div class="card lift"><b><i class="dot" style="background:${c.color}"></i>${esc(c.name)}</b>${bar(prog(c.id), c.color)}<small>${prog(c.id)}% complete</small></div>`).join('')}</section>
+  <div class="card"><h2>Recent activity</h2>${S.activity.map(a => `<div class="item"><span>${esc(a.t)}</span><small>${new Date(a.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</small></div>`).join('') || '<p class="empty">Your activity will show up here.</p>'}</div>`;
+};
+
+const EVF = [['title', 'Title', 'text', 1], ['type', 'Type', 'select', 0, Object.entries(TYPE).map(([k, v]) => [k, v[0]])], ['date', 'Date', 'date', 1], ['time', 'Time', 'time'], ['notes', 'Details', 'textarea']];
+V.planner = () => {
+  const m = U.month, lead = (m.getDay() + 6) % 7, days = new Date(m.getFullYear(), m.getMonth() + 1, 0).getDate(), cells = [];
+  for (let i = 0; i < lead; i++) cells.push('<div></div>');
+  for (let d = 1; d <= days; d++) {
+    const key = iso(new Date(m.getFullYear(), m.getMonth(), d));
+    const ev = S.events.filter(e => e.date === key).sort((a, b) => a.time.localeCompare(b.time));
+    cells.push(`<div class="day${key === iso(today) ? ' now' : ''}"><button class="dn" data-act="ev-add" data-d="${key}" aria-label="Add event on ${key}">${d}</button>${ev.map(e => `<button class="chip" style="background:${TYPE[e.type][1]}" data-act="ev-edit" data-id="${e.id}" title="${esc(e.title)}">${esc(e.title)}</button>`).join('')}</div>`);
+  }
+  return `<header class="hd"><h1>${m.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</h1><div class="row"><button class="btn" data-act="mo" data-n="-1" aria-label="Previous month">‹</button><button class="btn" data-act="mo" data-n="0">Today</button><button class="btn" data-act="mo" data-n="1" aria-label="Next month">›</button><button class="btn pri" data-act="ev-add">Add event</button></div></header>
+  <div class="card"><div class="cal">${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(d => `<div class="dow">${d}</div>`).join('')}${cells.join('')}</div><div class="legend">${Object.values(TYPE).map(t => `<span><i class="dot" style="background:${t[1]}"></i>${t[0]}</span>`).join('')}</div></div>`;
+};
+
+const taskRow = t => { const c = course(t.course), late = t.status !== 'done' && t.due < iso(today);
+  return `<div class="row-i${t.status === 'done' ? ' done' : ''}"><button class="chk" data-act="t-tog" data-id="${t.id}" role="checkbox" aria-checked="${t.status === 'done'}" aria-label="Mark ${esc(t.title)} complete"></button>
+  <div class="grow"><b>${esc(t.title)}</b><small>${esc(t.desc)}</small><small><i class="dot" style="background:${c.color}"></i>${esc(c.name)} · Due ${fd(t.due)}</small></div>
+  ${late ? '<span class="pill late">Overdue</span>' : ''}<span class="pill p-${t.priority}">${PR[t.priority]}</span><button class="pill st-${t.status}" data-act="t-cyc" data-id="${t.id}" title="Change status">${ST[t.status]}</button>
+  <button class="btn sm" data-act="t-edit" data-id="${t.id}">Edit</button><button class="btn sm dng" data-act="t-del" data-id="${t.id}">Delete</button></div>`; };
+V.tasks = () => `<header class="hd"><div><h1>Assignments</h1><p class="mut">${prog()}% complete overall</p></div><button class="btn pri" data-act="t-add">Add assignment</button></header>
+  <div class="card">${bar(prog(), 'var(--pri)')}<div class="filters"><input data-f="tq" type="search" placeholder="Search assignments" aria-label="Search" value="${esc(U.tq)}">
+  <select data-f="tc" aria-label="Subject">${opts([['', 'All subjects'], ...cOpts()], U.tc)}</select><select data-f="tp" aria-label="Priority">${opts([['', 'Any priority'], ...Object.entries(PR)], U.tp)}</select><select data-f="ts" aria-label="Status">${opts([['', 'Any status'], ...Object.entries(ST)], U.ts)}</select></div><div id="list"></div></div>`;
+FILL.tasks = () => { const q = U.tq.toLowerCase(); const r = S.tasks.filter(t => (!U.tc || t.course === U.tc) && (!U.tp || t.priority === U.tp) && (!U.ts || t.status === U.ts) && (!q || (t.title + t.desc).toLowerCase().includes(q))).sort((a, b) => a.due.localeCompare(b.due));
+  $('#list').innerHTML = r.map(taskRow).join('') || '<p class="empty">No assignments match. Clear the filters or add a new one.</p>'; };
+const TF = () => [['title', 'Title', 'text', 1], ['desc', 'Description', 'textarea'], ['course', 'Subject', 'select', 0, cOpts()], ['due', 'Due date', 'date', 1], ['priority', 'Priority', 'select', 0, Object.entries(PR)], ['status', 'Status', 'select', 0, Object.entries(ST)]];
+
+const note = () => S.notes.find(n => n.id === U.nid) || null;
+V.notes = () => { if (!note() && S.notes.length) U.nid = [...S.notes].sort((a, b) => b.updated - a.updated)[0].id; const n = note();
+  return `<header class="hd"><h1>Notes</h1><button class="btn pri" data-act="n-new">New note</button></header><div class="split"><div class="card"><input data-f="nq" type="search" placeholder="Search notes" aria-label="Search notes" value="${esc(U.nq)}"><div class="nl" id="list" style="margin-top:10px"></div></div>
+  <div class="card">${n ? `<input id="ntitle" data-n="title" aria-label="Note title" value="${esc(n.title)}"><div class="row" style="align-items:center;margin:6px 0"><select data-n="course" aria-label="Subject" style="max-width:220px">${opts(cOpts(), n.course)}</select><small id="saved">Changes save automatically</small><button class="btn sm dng" data-act="n-del" style="margin-left:auto">Delete</button></div><textarea id="nbody" data-n="body" aria-label="Note content" placeholder="Start writing…">${esc(n.body)}</textarea>` : '<p class="empty">No notes yet. Create one to start writing.</p>'}</div></div>`; };
+FILL.notes = () => { const q = U.nq.toLowerCase(); const r = S.notes.filter(n => !q || (n.title + n.body).toLowerCase().includes(q)).sort((a, b) => b.updated - a.updated);
+  $('#list').innerHTML = r.map(n => `<button class="${n.id === U.nid ? 'on' : ''}" data-act="n-pick" data-id="${n.id}"><b>${esc(n.title || 'Untitled')}</b><small>${esc(course(n.course).name)} · ${new Date(n.updated).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</small></button>`).join('') || '<p class="empty">No notes found.</p>'; };
+
+const deck = () => S.decks.find(d => d.id === U.did) || S.decks[0];
+V.cards = () => { const d = deck(), n = d?.cards.length || 0; if (U.ci >= n) U.ci = 0; const c = d?.cards[U.ci];
+  const know = d ? d.cards.filter(x => x.st === 'know').length : 0, pr = d ? d.cards.filter(x => x.st === 'practice').length : 0;
+  return `<header class="hd"><div><h1>Flashcards</h1><p class="mut">${d ? `${know + pr} of ${n} reviewed · ${know} know · ${pr} need practice` : 'Create a deck to begin.'}</p></div><div class="row"><button class="btn" data-act="deck-add">New deck</button>${d ? '<button class="btn" data-act="card-add">Add card</button><button class="btn" data-act="fl-shuffle">Shuffle</button><button class="btn dng" data-act="deck-del">Delete deck</button>' : ''}</div></header>
+  <div class="tabs">${S.decks.map(x => `<button class="btn ${x.id === d?.id ? 'on' : ''}" data-act="deck" data-id="${x.id}">${esc(x.name)}</button>`).join('')}</div>
+  ${c ? `<button class="fc" data-act="fl-flip" aria-label="Flip card"><span class="fi"><span class="face">${esc(c.q)}</span><span class="face back">${esc(c.a)}</span></span></button><p class="center mut">Card ${U.ci + 1} of ${n}${c.st ? ' · marked ' + (c.st === 'know' ? 'Know' : 'Need practice') : ''}</p>
+  <div class="row" style="justify-content:center;margin-top:12px"><button class="btn" data-act="fl-prev">Previous</button><button class="btn dng" data-act="fl-mark" data-s="practice">Need practice</button><button class="btn pri" data-act="fl-mark" data-s="know">Know</button><button class="btn" data-act="fl-next">Next</button></div>` : d ? '<div class="card empty">This deck is empty. Add your first card.</div>' : ''}`; };
+
+V.quiz = () => {
+  if (U.res) { const q = S.quizzes.find(z => z.id === U.qz), r = U.res;
+    return `<header class="hd"><h1>${esc(q.title)}: results</h1></header><div class="card stat">${ring(r.pct, r.pct >= 70 ? '#15a362' : '#ff9f6b')}<div><b class="big">${r.score} / ${q.qs.length}</b><span>${r.pct >= 70 ? 'Great work.' : 'Review the answers below and try again.'}</span></div></div>
+    ${q.qs.map((x, i) => `<div class="card" style="margin-top:14px"><b>${i + 1}. ${esc(x.q)}</b>${x.o.map((o, j) => `<div class="opt ${j === x.a ? 'ok' : j === U.ans[i] ? 'no' : ''}">${esc(o)}${j === x.a ? ' ✓ correct' : j === U.ans[i] ? ' ✗ your answer' : ''}</div>`).join('')}</div>`).join('')}
+    <div class="row" style="margin-top:16px"><button class="btn pri" data-act="q-start" data-id="${q.id}">Retry quiz</button><button class="btn" data-act="q-exit">All quizzes</button></div>`; }
+  if (U.qz) { const q = S.quizzes.find(z => z.id === U.qz), x = q.qs[U.qi], last = U.qi === q.qs.length - 1;
+    return `<header class="hd"><div><h1>${esc(q.title)}</h1><p class="mut">Question ${U.qi + 1} of ${q.qs.length}</p></div><button class="btn" data-act="q-exit">Exit</button></header><div class="card">${bar(Math.round(100 * (U.qi + 1) / q.qs.length), 'var(--pri)')}<h2>${esc(x.q)}</h2>
+    ${x.o.map((o, j) => `<label class="opt"><input type="radio" name="opt" value="${j}"${U.ans[U.qi] === j ? ' checked' : ''}>${esc(o)}</label>`).join('')}
+    <div class="row"><button class="btn" data-act="q-prev"${U.qi ? '' : ' disabled'}>Previous</button>${last ? '<button class="btn pri" data-act="q-submit">Submit quiz</button>' : '<button class="btn pri" data-act="q-next">Next</button>'}</div></div>`; }
+  return `<header class="hd"><h1>Quizzes</h1></header><div class="grid cards">${S.quizzes.map(z => { const l = [...S.quizLog].reverse().find(r => r.title === z.title);
+    return `<div class="card lift"><h2>${esc(z.title)}</h2><p class="mut">${z.qs.length} questions${l ? ` · last score ${l.pct}%` : ''}</p><button class="btn pri" style="margin-top:14px" data-act="q-start" data-id="${z.id}">Start quiz</button></div>`; }).join('')}</div>`;
+};
+
+const dur = m => S.timer[m] * 60;
+V.timer = () => { const td = S.sessions.filter(s => s.d === iso(today));
+  return `<header class="hd"><h1>Focus timer</h1><button class="btn" data-act="tm-set">Customize</button></header><div class="card center"><div class="tabs" style="justify-content:center">${[['focus', 'Focus'], ['short', 'Short break'], ['long', 'Long break']].map(([k, l]) => `<button class="btn ${T.mode === k ? 'on' : ''}" data-act="tm-mode" data-m="${k}">${l}</button>`).join('')}</div>
+  <div class="tm"><svg viewBox="0 0 200 200" aria-hidden="true"><circle cx="100" cy="100" r="90" stroke="#eef0f7"/><circle id="trf" class="rf" cx="100" cy="100" r="90"/></svg><div id="tm" role="timer"></div></div>
+  <label style="max-width:260px;margin:0 auto 14px">Studying<select data-f="tcr">${opts([['', 'General'], ...cOpts()], U.tcr)}</select></label>
+  <div class="row" style="justify-content:center"><button class="btn pri" id="tgo" data-act="tm-toggle"></button><button class="btn" data-act="tm-reset">Reset</button></div></div>
+  <section class="grid stats" style="margin-top:16px">${stat('Sessions today', td.length, 'completed')}${stat('Focus time today', td.reduce((a, s) => a + s.m, 0) + ' min', 'today')}${stat('Total focus time', hrs(S.sessions.reduce((a, s) => a + s.m, 0)) + ' h', 'all time')}</section>`; };
+function paint() { const el = $('#tm'); if (!el) return; const l = T.left, mm = String(Math.floor(l / 60)).padStart(2, '0'), ss = String(l % 60).padStart(2, '0');
+  el.textContent = `${mm}:${ss}`; $('#trf').style.setProperty('--o', 565.5 * (1 - l / dur(T.mode))); $('#tgo').textContent = T.run ? 'Pause' : 'Start'; document.title = T.run ? `${mm}:${ss} · Cadence` : 'Cadence'; }
+function stopTimer() { clearInterval(T.id); T.run = false; }
+function setMode(m) { stopTimer(); T.mode = m; T.left = dur(m); if (U.route === 'timer') render(); }
+function tick() { T.left = Math.max(0, Math.round((T.end - Date.now()) / 1000)); paint();
+  if (T.left > 0) return; stopTimer();
+  if (T.mode === 'focus') { S.sessions.push({ d: iso(new Date()), m: S.timer.focus, c: U.tcr }); log(`Finished a ${S.timer.focus}-minute focus session`); save().then(ok => toast(ok ? 'Focus session complete. Time for a break.' : 'Focus session ended, but its history could not be saved.', !ok)); setMode(S.sessions.filter(s => s.d === iso(today)).length % 4 === 0 ? 'long' : 'short'); }
+  else { toast('Break over. Ready to focus?'); setMode('focus'); } }
+
+V.courses = () => `<header class="hd"><h1>Courses</h1><button class="btn pri" data-act="c-add">Add course</button></header><div class="grid cards">${S.courses.map(c => { const t = S.tasks.filter(x => x.course === c.id), up = t.filter(x => x.status !== 'done').sort((a, b) => a.due.localeCompare(b.due)).slice(0, 2);
+  return `<div class="card lift" style="border-top:5px solid ${c.color}"><div class="row" style="justify-content:space-between"><h2>${esc(c.name)}</h2><button class="btn sm" data-act="c-edit" data-id="${c.id}">Edit</button></div><p class="mut">${esc(c.desc)}</p>${bar(prog(c.id), c.color)}<small>${prog(c.id)}% complete · ${t.length} assignments</small>
+  <p style="margin-top:12px"><b>Upcoming</b></p>${up.map(x => `<small>${esc(x.title)} · ${fd(x.due)}</small>`).join('') || '<small>No open deadlines</small>'}<p style="margin-top:12px"><a href="#notes">${S.notes.filter(n => n.course === c.id).length} notes</a></p></div>`; }).join('') || '<p class="empty">No courses yet.</p>'}</div>`;
+
+V.progress = () => { const w = week(), max = Math.max(60, ...w.map(x => x.m)), ql = S.quizLog.slice(-6), avg = ql.length ? Math.round(ql.reduce((a, r) => a + r.pct, 0) / ql.length) : 0;
+  const by = S.courses.map(c => ({ c, m: w.reduce((a, x) => a + S.sessions.filter(s => s.d === x.d && s.c === c.id).reduce((b, s) => b + s.m, 0), 0) })), gen = w.reduce((a, x) => a + x.m, 0) - by.reduce((a, x) => a + x.m, 0);
+  if (gen > 0) by.push({ c: { name: 'General', color: '#94a3b8' }, m: gen }); const tot = by.reduce((a, x) => a + x.m, 0); let acc = 0;
+  const grad = tot ? by.filter(x => x.m).map(x => { const s = acc; acc += 100 * x.m / tot; return `${x.c.color} ${s}% ${acc}%`; }).join(',') : '#eef0f7 0 100%';
+  return `<header class="hd"><h1>Progress</h1></header><section class="grid stats">${stat('Study hours this week', hrs(w.reduce((a, x) => a + x.m, 0)), 'hours')}${stat('Assignments completed', S.tasks.filter(t => t.status === 'done').length, 'of ' + S.tasks.length)}${stat('Quiz average', avg + '%', 'last ' + ql.length + ' quizzes')}${stat('Study streak', streak(), 'days')}</section>
   <section class="grid two"><div class="card"><h2>Weekly activity</h2><div class="cols">${w.map(x => `<div class="col"><i style="height:${Math.max(2, 100 * x.m / max)}%" title="${x.m} min"></i>${new Date(x.d + 'T00:00').toLocaleDateString(undefined, { weekday: 'short' })}</div>`).join('')}</div></div>
   <div class="card"><h2>Study time by course</h2><div class="row" style="align-items:center"><div class="donut" style="background:conic-gradient(${grad})" role="img" aria-label="Study time distribution"></div><div>${by.map(x => `<small><i class="dot" style="background:${x.c.color}"></i>${esc(x.c.name)}: ${x.m} min</small>`).join('') || '<small>Complete a focus session to see this.</small>'}</div></div></div></section>
   <section class="grid two"><div class="card"><h2>Course completion</h2>${S.courses.map(c => `<small>${esc(c.name)} · ${prog(c.id)}%</small>${bar(prog(c.id), c.color)}`).join('')}</div>
@@ -464,4 +842,3 @@ $('#nav').innerHTML = NAV.map(([r, l]) => `<a href="#${r}" data-r="${r}">${ic(r)
 window.addEventListener('hashchange', render);
 void bootAccount();
 })();
-
