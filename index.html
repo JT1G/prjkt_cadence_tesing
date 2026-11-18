@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cadence</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#view">Skip to content</a>
+<aside class="side" id="side">
+  <div class="logo"><img class="wm" src="cadence-logo.svg" alt="Cadence"><img class="sy" src="favicon.svg" alt="Cadence"></div>
+  <nav id="nav" aria-label="Main"></nav>
+  <div class="foot">
+    <section id="account-area" class="account-area" aria-label="Account"></section>
+    <button class="me" data-act="name" aria-label="Edit your name"><span class="av" id="av"></span><span id="who"></span></button>
+    <button class="lnk" data-act="reset">Reset demo data</button>
+  </div>
+</aside>
+<div class="scrim" data-act="nav"></div>
+<main>
+  <button id="burger" class="btn ico" data-act="nav" aria-label="Open menu"><svg class="ic" viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
+  <div id="view" tabindex="-1"></div>
+</main>
+<div class="overlay" id="modal" role="dialog" aria-modal="true" aria-label="Dialog"><div class="sheet" id="sheet"></div></div>
+<div id="toast" role="status" aria-live="polite"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.0"></script>
+<script src="supabase-config.js"></script>
+<script src="data.js"></script>
+<script src="storage.js"></script>
+<script src="cloud.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
